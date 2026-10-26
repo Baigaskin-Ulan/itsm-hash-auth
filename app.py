@@ -6,10 +6,13 @@ import time
 from argon2 import PasswordHasher
 from argon2.exceptions import InvalidHashError, VerificationError
 from flask import Flask, g, redirect, render_template, request, url_for
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
 from flask_wtf.csrf import CSRFProtect
 
 app = Flask(__name__)
 app.config["SECRET_KEY"] = secrets.token_hex(32)
+limiter = Limiter(get_remote_address, app=app, storage_uri="memory://")
 csrf = CSRFProtect(app)
 
 ph = PasswordHasher()
@@ -120,7 +123,13 @@ def register():
     return render_template("register.html", error=error)
 
 
+def login_username():
+    return "user:" + request.form.get("username", "").strip().lower()
+
+
 @app.route("/login", methods=["GET", "POST"])
+@limiter.limit("5 per minute", methods=["POST"])
+@limiter.limit("10 per hour", key_func=login_username, methods=["POST"])
 def login():
     error = None
     if request.method == "POST":
@@ -151,7 +160,14 @@ def login():
                             samesite="Lax", path="/")
             return resp
         error = "Invalid username or password."
+        return render_template("login.html", error=error), 401
     return render_template("login.html", error=error)
+
+
+@app.errorhandler(429)
+def too_many_requests(e):
+    error = "Too many login attempts. Try again later."
+    return render_template("login.html", error=error), 429
 
 
 

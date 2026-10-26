@@ -25,6 +25,9 @@ ABSOLUTE_TIMEOUT = 8 * 60 * 60
 MIN_LEN = 15
 MAX_LEN = 128
 
+with open("blocklist.txt", encoding="utf-8") as f:
+    BLOCKLIST = {line.strip().lower() for line in f if line.strip()}
+
 
 
 
@@ -109,6 +112,10 @@ def register():
             error = "Username and email are required."
         elif not MIN_LEN <= len(password) <= MAX_LEN:
             error = f"Password must be {MIN_LEN} to {MAX_LEN} characters long."
+        elif password.lower() in BLOCKLIST:
+            error = "This password is too common. Choose another one."
+        elif username.lower() in password.lower():
+            error = "Password must not contain the username."
         else:
             try:
                 db = get_db()

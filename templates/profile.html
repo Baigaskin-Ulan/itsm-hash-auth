@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Hello, {{ user["username"] }}</h1>
+<p>Role: {{ user["role"] }}, group: {{ user["user_group"] }}</p>
+<form method="post" action="{{ url_for('logout') }}">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <button type="submit">Log out</button>
+</form>
+{% endblock %}

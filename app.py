@@ -31,6 +31,7 @@ IDLE_TIMEOUT = 30 * 60
 ABSOLUTE_TIMEOUT = 8 * 60 * 60
 MIN_LEN = 15
 MAX_LEN = 128
+RESET_TTL = 30 * 60
 
 log = logging.getLogger("auth")
 log.setLevel(logging.INFO)
@@ -285,6 +286,62 @@ def change_password():
                                samesite="Lax")
             return resp
     return render_template("change_password.html", error=error, done=done)
+
+
+def send_reset_email(email, link):
+    """Lab stand-in for e-mail: print the reset link to the server console."""
+    print(f"[reset] password reset link for {email}: {link}", flush=True)
+
+
+@app.route("/forgot", methods=["GET", "POST"])
+@limiter.limit("5 per hour", methods=["POST"])
+def forgot():
+    sent = False
+    if request.method == "POST":
+        email = request.form.get("email", "").strip().lower()
+        db = get_db()
+        user = db.execute("SELECT id FROM users WHERE email = ?", (email,)).fetchone()
+        if user:
+            token = secrets.token_urlsafe(32)
+            db.execute(
+                "INSERT INTO password_resets (token_hash, user_id, expires_at) VALUES (?, ?, ?)",
+                (token_hash(token), user["id"], time.time() + RESET_TTL),
+            )
+            db.commit()
+            link = url_for("reset", token=token, _external=True)
+            send_reset_email(email, link)
+            audit("reset_requested", email)
+        else:
+            audit("reset_requested_unknown", email)
+        sent = True
+    return render_template("forgot.html", sent=sent)
+
+
+@app.route("/reset/<token>", methods=["GET", "POST"])
+def reset(token):
+    db = get_db()
+    db.execute("DELETE FROM password_resets WHERE expires_at < ?", (time.time(),))
+    db.commit()
+    row = db.execute(
+        "SELECT pr.user_id, u.username FROM password_resets pr "
+        "JOIN users u ON u.id = pr.user_id WHERE pr.token_hash = ?",
+        (token_hash(token),),
+    ).fetchone()
+    if row is None:
+        return render_template("reset.html", invalid=True)
+    error = None
+    if request.method == "POST":
+        new = request.form.get("new", "")
+        error = password_error(row["username"], new)
+        if error is None:
+            db.execute("UPDATE users SET password_hash = ? WHERE id = ?",
+                       (ph.hash(new), row["user_id"]))
+            db.execute("DELETE FROM password_resets WHERE user_id = ?", (row["user_id"],))
+            db.commit()
+            delete_user_sessions(row["user_id"])
+            audit("reset_done", row["username"])
+            return render_template("reset.html", done=True)
+    return render_template("reset.html", error=error)
 
 
 @app.route("/")

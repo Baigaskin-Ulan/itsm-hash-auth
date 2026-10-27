@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Reset your password</h1>
+{% if sent %}
+<p>If that email address has an account, a reset link has been sent. Check your inbox.</p>
+<p><a href="{{ url_for('login') }}">Back to log in</a></p>
+{% else %}
+<form method="post">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <label>Email
+    <input name="email" type="email" autocomplete="email" required>
+  </label>
+  <button type="submit">Send reset link</button>
+</form>
+<p><a href="{{ url_for('login') }}">Back to log in</a></p>
+{% endif %}
+{% endblock %}

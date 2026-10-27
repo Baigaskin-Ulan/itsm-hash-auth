@@ -16,3 +16,8 @@ CREATE TABLE IF NOT EXISTS sessions (
     created_at  REAL    NOT NULL,
     last_seen   REAL    NOT NULL
 );
+CREATE TABLE IF NOT EXISTS password_resets (
+    token_hash  TEXT    PRIMARY KEY,
+    user_id     INTEGER NOT NULL REFERENCES users(id),
+    expires_at  REAL    NOT NULL
+);

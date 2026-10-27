@@ -280,10 +280,9 @@ def change_password():
             db.commit()
             delete_user_sessions(g.user["id"])
             audit("change_password_ok", row["username"])
-            token = create_session(g.user["id"])
             resp = make_response(render_template("change_password.html", done=True))
-            resp.set_cookie(COOKIE_NAME, token, secure=True, httponly=True,
-                            samesite="Lax", path="/")
+            resp.delete_cookie(COOKIE_NAME, path="/", secure=True, httponly=True,
+                               samesite="Lax")
             return resp
     return render_template("change_password.html", error=error, done=done)
 

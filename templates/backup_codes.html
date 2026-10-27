@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Backup codes</h1>
+{% if codes %}
+<p class="error">Save these codes now. Each works once, and they are shown only this time.</p>
+<ul>
+{% for c in codes %}<li><code>{{ c }}</code></li>{% endfor %}
+</ul>
+<p><a href="{{ url_for('profile') }}">Back to profile</a></p>
+{% else %}
+<p>You have {{ remaining }} unused backup code(s).</p>
+<p>Use them to sign in if you cannot use your password. Generating new codes replaces any old ones.</p>
+<form method="post">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <button type="submit">Generate 10 new codes</button>
+</form>
+<p><a href="{{ url_for('profile') }}">Back to profile</a></p>
+{% endif %}
+{% endblock %}

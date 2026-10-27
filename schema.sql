@@ -21,3 +21,8 @@ CREATE TABLE IF NOT EXISTS password_resets (
     user_id     INTEGER NOT NULL REFERENCES users(id),
     expires_at  REAL    NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS backup_codes (
+    code_hash  TEXT    PRIMARY KEY,
+    user_id    INTEGER NOT NULL REFERENCES users(id)
+);

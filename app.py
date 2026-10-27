@@ -32,6 +32,7 @@ ABSOLUTE_TIMEOUT = 8 * 60 * 60
 MIN_LEN = 15
 MAX_LEN = 128
 RESET_TTL = 30 * 60
+N_BACKUP_CODES = 10
 
 log = logging.getLogger("auth")
 log.setLevel(logging.INFO)
@@ -342,6 +343,73 @@ def reset(token):
             audit("reset_done", row["username"])
             return render_template("reset.html", done=True)
     return render_template("reset.html", error=error)
+
+
+def format_code(raw):
+    """Group a code for readability, e.g. abcde-fghij."""
+    return raw[:5] + "-" + raw[5:]
+
+
+@app.route("/backup-codes", methods=["GET", "POST"])
+def backup_codes():
+    if g.user is None:
+        return redirect(url_for("login"))
+    db = get_db()
+    if request.method == "POST":
+        db.execute("DELETE FROM backup_codes WHERE user_id = ?", (g.user["id"],))
+        codes = [format_code(secrets.token_hex(5)) for _ in range(N_BACKUP_CODES)]
+        for code in codes:
+            db.execute("INSERT INTO backup_codes (code_hash, user_id) VALUES (?, ?)",
+                       (ph.hash(code), g.user["id"]))
+        db.commit()
+        audit("backup_codes_generated", g.user["username"])
+        return render_template("backup_codes.html", codes=codes)
+    remaining = db.execute(
+        "SELECT COUNT(*) FROM backup_codes WHERE user_id = ?", (g.user["id"],)
+    ).fetchone()[0]
+    return render_template("backup_codes.html", remaining=remaining)
+
+
+@app.route("/login-backup", methods=["GET", "POST"])
+@limiter.limit("5 per minute", methods=["POST"])
+@limiter.limit("10 per hour", key_func=login_username, methods=["POST"])
+def login_backup():
+    error = None
+    if request.method == "POST":
+        username = request.form.get("username", "").strip()
+        code = request.form.get("code", "").strip()
+        db = get_db()
+        user = db.execute(
+            "SELECT id, is_active FROM users WHERE username = ?", (username,)
+        ).fetchone()
+        matched = None
+        if user and user["is_active"]:
+            rows = db.execute(
+                "SELECT code_hash FROM backup_codes WHERE user_id = ?", (user["id"],)
+            ).fetchall()
+            for row in rows:
+                try:
+                    ph.verify(row["code_hash"], code)
+                    matched = row["code_hash"]
+                    break
+                except (VerificationError, InvalidHashError):
+                    pass
+        if matched:
+            db.execute("DELETE FROM backup_codes WHERE code_hash = ?", (matched,))
+            db.commit()
+            old_token = request.cookies.get(COOKIE_NAME)
+            if old_token:
+                delete_session(old_token)
+            token = create_session(user["id"])
+            audit("login_backup_ok", username)
+            resp = redirect(url_for("profile"))
+            resp.set_cookie(COOKIE_NAME, token, secure=True, httponly=True,
+                            samesite="Lax", path="/")
+            return resp
+        audit("login_backup_fail", username)
+        error = "Invalid username or backup code."
+        return render_template("login_backup.html", error=error), 401
+    return render_template("login_backup.html", error=error)
 
 
 @app.route("/")

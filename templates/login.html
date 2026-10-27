@@ -12,6 +12,7 @@
   </label>
   <button type="submit">Log in</button>
 </form>
+<p><a href="{{ url_for('login_backup') }}">Use a backup code</a></p>
 <p><a href="{{ url_for('forgot') }}">Forgot password?</a></p>
 <p>No account? <a href="{{ url_for('register') }}">Register</a></p>
 {% endblock %}

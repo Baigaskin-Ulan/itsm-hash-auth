@@ -1,4 +1,5 @@
 import hashlib
+import logging
 import secrets
 import sqlite3
 import time
@@ -24,6 +25,17 @@ IDLE_TIMEOUT = 30 * 60
 ABSOLUTE_TIMEOUT = 8 * 60 * 60
 MIN_LEN = 15
 MAX_LEN = 128
+
+log = logging.getLogger("auth")
+log.setLevel(logging.INFO)
+handler = logging.FileHandler("auth.log", encoding="utf-8")
+handler.setFormatter(logging.Formatter("%(asctime)s %(message)s"))
+log.addHandler(handler)
+
+
+def audit(event, username):
+    log.info("%s user=%r ip=%s", event, username, request.remote_addr)
+
 
 with open("blocklist.txt", encoding="utf-8") as f:
     BLOCKLIST = {line.strip().lower() for line in f if line.strip()}
@@ -124,9 +136,11 @@ def register():
                     (username, email, ph.hash(password)),
                 )
                 db.commit()
+                audit("register_ok", username)
                 return redirect(url_for("login"))
             except sqlite3.IntegrityError:
                 error = "Registration failed. Try another username or email."
+        audit("register_fail", username)
     return render_template("register.html", error=error)
 
 
@@ -162,17 +176,20 @@ def login():
             if old_token:
                 delete_session(old_token)
             token = create_session(user["id"])
+            audit("login_ok", username)
             resp = redirect(url_for("profile"))
             resp.set_cookie(COOKIE_NAME, token, secure=True, httponly=True,
                             samesite="Lax", path="/")
             return resp
         error = "Invalid username or password."
+        audit("login_fail", username)
         return render_template("login.html", error=error), 401
     return render_template("login.html", error=error)
 
 
 @app.errorhandler(429)
 def too_many_requests(e):
+    audit("rate_limited", request.form.get("username", ""))
     error = "Too many login attempts. Try again later."
     return render_template("login.html", error=error), 429
 
@@ -185,6 +202,7 @@ def logout():
     token = request.cookies.get(COOKIE_NAME)
     if token:
         delete_session(token)
+    audit("logout", g.user["username"] if g.user else "")
     resp = redirect(url_for("login"))
     resp.delete_cookie(COOKIE_NAME, path="/", secure=True, httponly=True,
                        samesite="Lax")

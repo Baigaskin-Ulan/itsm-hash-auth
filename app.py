@@ -13,6 +13,12 @@ from flask_wtf.csrf import CSRFProtect
 
 app = Flask(__name__)
 app.config["SECRET_KEY"] = secrets.token_hex(32)
+app.config.update(
+    SESSION_COOKIE_SECURE=True,
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SAMESITE="Lax",
+    MAX_CONTENT_LENGTH=16 * 1024,
+)
 limiter = Limiter(get_remote_address, app=app, storage_uri="memory://")
 csrf = CSRFProtect(app)
 
@@ -214,6 +220,19 @@ def profile():
     if g.user is None:
         return redirect(url_for("login"))
     return render_template("profile.html", user=g.user)
+
+
+@app.after_request
+def security_headers(resp):
+    resp.headers["Content-Security-Policy"] = (
+        "default-src 'self'; style-src 'self' 'unsafe-inline'; "
+        "frame-ancestors 'none'; form-action 'self'; base-uri 'none'"
+    )
+    resp.headers["X-Content-Type-Options"] = "nosniff"
+    resp.headers["X-Frame-Options"] = "DENY"
+    resp.headers["Referrer-Policy"] = "same-origin"
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
 
 
 @app.route("/")

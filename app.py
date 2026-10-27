@@ -6,7 +6,7 @@ import time
 
 from argon2 import PasswordHasher
 from argon2.exceptions import InvalidHashError, VerificationError
-from flask import Flask, g, redirect, render_template, request, url_for
+from flask import Flask, g, make_response, redirect, render_template, request, url_for
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 from flask_wtf.csrf import CSRFProtect
@@ -45,6 +45,17 @@ def audit(event, username):
 
 with open("blocklist.txt", encoding="utf-8") as f:
     BLOCKLIST = {line.strip().lower() for line in f if line.strip()}
+
+
+def password_error(username, password):
+    """Return an error string if the new password breaks the policy, else None."""
+    if not MIN_LEN <= len(password) <= MAX_LEN:
+        return f"Password must be {MIN_LEN} to {MAX_LEN} characters long."
+    if password.lower() in BLOCKLIST:
+        return "This password is too common. Choose another one."
+    if username.lower() in password.lower():
+        return "Password must not contain the username."
+    return None
 
 
 
@@ -128,12 +139,8 @@ def register():
         password = request.form.get("password", "")
         if not username or not email:
             error = "Username and email are required."
-        elif not MIN_LEN <= len(password) <= MAX_LEN:
-            error = f"Password must be {MIN_LEN} to {MAX_LEN} characters long."
-        elif password.lower() in BLOCKLIST:
-            error = "This password is too common. Choose another one."
-        elif username.lower() in password.lower():
-            error = "Password must not contain the username."
+        elif password_error(username, password):
+            error = password_error(username, password)
         else:
             try:
                 db = get_db()
@@ -233,6 +240,52 @@ def security_headers(resp):
     resp.headers["Referrer-Policy"] = "same-origin"
     resp.headers["Cache-Control"] = "no-store"
     return resp
+
+
+def delete_user_sessions(user_id):
+    db = get_db()
+    db.execute("DELETE FROM sessions WHERE user_id = ?", (user_id,))
+    db.commit()
+
+
+@app.route("/change-password", methods=["GET", "POST"])
+def change_password():
+    if g.user is None:
+        return redirect(url_for("login"))
+    error = None
+    done = False
+    if request.method == "POST":
+        current = request.form.get("current", "")
+        new = request.form.get("new", "")
+        db = get_db()
+        row = db.execute(
+            "SELECT username, password_hash FROM users WHERE id = ?",
+            (g.user["id"],),
+        ).fetchone()
+        try:
+            ph.verify(row["password_hash"], current)
+            current_ok = True
+        except (VerificationError, InvalidHashError):
+            current_ok = False
+        if not current_ok:
+            error = "Current password is incorrect."
+            audit("change_password_fail", row["username"])
+        elif password_error(row["username"], new):
+            error = password_error(row["username"], new)
+        elif new == current:
+            error = "New password must differ from the current one."
+        else:
+            db.execute("UPDATE users SET password_hash = ? WHERE id = ?",
+                       (ph.hash(new), g.user["id"]))
+            db.commit()
+            delete_user_sessions(g.user["id"])
+            audit("change_password_ok", row["username"])
+            token = create_session(g.user["id"])
+            resp = make_response(render_template("change_password.html", done=True))
+            resp.set_cookie(COOKIE_NAME, token, secure=True, httponly=True,
+                            samesite="Lax", path="/")
+            return resp
+    return render_template("change_password.html", error=error, done=done)
 
 
 @app.route("/")

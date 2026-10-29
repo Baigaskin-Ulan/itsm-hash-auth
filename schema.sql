@@ -26,3 +26,11 @@ CREATE TABLE IF NOT EXISTS backup_codes (
     code_hash  TEXT    PRIMARY KEY,
     user_id    INTEGER NOT NULL REFERENCES users(id)
 );
+
+CREATE TABLE IF NOT EXISTS audit_actions (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    actor      TEXT    NOT NULL,
+    action     TEXT    NOT NULL,
+    target     TEXT    NOT NULL,
+    at         TEXT    NOT NULL DEFAULT CURRENT_TIMESTAMP
+);

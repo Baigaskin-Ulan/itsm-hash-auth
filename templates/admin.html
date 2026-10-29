@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% block content %}
+{% if forbidden %}
+<h1>Admin</h1>
+<p class="error">You must be signed in as an administrator to view this page.</p>
+<p><a href="{{ url_for('login') }}">Log in</a></p>
+{% else %}
+<h1>Admin panel</h1>
+{% if message %}<p class="error">{{ message }}</p>{% endif %}
+
+<h2>Users</h2>
+<table border="1" cellpadding="4">
+  <tr><th>User</th><th>Group</th><th>Role</th><th>Active</th><th>Must reset</th><th>Sessions</th></tr>
+  {% for u in users %}
+  <tr>
+    <td>{{ u["username"] }}</td><td>{{ u["user_group"] }}</td><td>{{ u["role"] }}</td>
+    <td>{{ "yes" if u["is_active"] else "no" }}</td>
+    <td>{{ "yes" if u["must_reset"] else "no" }}</td>
+    <td>{{ u["sessions"] }}</td>
+  </tr>
+  {% endfor %}
+</table>
+
+<h2>Apply an action</h2>
+<form method="post">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <label>Action
+    <select name="action">
+      {% for key, label in actions.items() %}<option value="{{ key }}">{{ label }}</option>{% endfor %}
+    </select>
+  </label>
+  <label>Scope
+    <select name="scope">
+      <option value="user">Single user (username)</option>
+      <option value="group">Whole group (group name)</option>
+    </select>
+  </label>
+  <label>Target (username or group name)
+    <input name="target" required>
+  </label>
+  <label>Confirm with your admin password
+    <input name="admin_password" type="password" autocomplete="current-password" required>
+  </label>
+  <button type="submit">Apply</button>
+</form>
+<p>Groups: {{ groups|join(", ") }}</p>
+<p><a href="{{ url_for('profile') }}">Back to profile</a></p>
+{% endif %}
+{% endblock %}

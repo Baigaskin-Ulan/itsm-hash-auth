@@ -173,7 +173,7 @@ def login():
         password = request.form.get("password", "")
         db = get_db()
         user = db.execute(
-            "SELECT id, password_hash, is_active FROM users WHERE username = ?",
+            "SELECT id, password_hash, is_active, must_reset FROM users WHERE username = ?",
             (username,),
         ).fetchone()
         stored = user["password_hash"] if user else DUMMY_HASH
@@ -182,6 +182,11 @@ def login():
             ok = user is not None and user["is_active"] == 1
         except (VerificationError, InvalidHashError):
             ok = False
+        if ok and user["must_reset"]:
+            audit("login_blocked_reset", username)
+            error = "An administrator requires this account to reset its password. "\
+                    "Use 'Forgot password?'."
+            return render_template("login.html", error=error), 403
         if ok:
             if ph.check_needs_rehash(stored):
                 db.execute("UPDATE users SET password_hash = ? WHERE id = ?",
@@ -335,7 +340,7 @@ def reset(token):
         new = request.form.get("new", "")
         error = password_error(row["username"], new)
         if error is None:
-            db.execute("UPDATE users SET password_hash = ? WHERE id = ?",
+            db.execute("UPDATE users SET password_hash = ?, must_reset = 0 WHERE id = ?",
                        (ph.hash(new), row["user_id"]))
             db.execute("DELETE FROM password_resets WHERE user_id = ?", (row["user_id"],))
             db.commit()
@@ -410,6 +415,84 @@ def login_backup():
         error = "Invalid username or backup code."
         return render_template("login_backup.html", error=error), 401
     return render_template("login_backup.html", error=error)
+
+
+ADMIN_ACTIONS = {
+    "revoke_sessions": "Revoked sessions",
+    "force_reset": "Forced password reset",
+    "disable": "Disabled account",
+    "enable": "Enabled account",
+}
+
+
+def apply_admin_action(action, user_ids):
+    if not user_ids:
+        return
+    db = get_db()
+    marks = "(" + ",".join("?" for _ in user_ids) + ")"
+    if action == "revoke_sessions":
+        db.execute(f"DELETE FROM sessions WHERE user_id IN {marks}", user_ids)
+    elif action == "force_reset":
+        db.execute(f"UPDATE users SET must_reset = 1 WHERE id IN {marks}", user_ids)
+        db.execute(f"DELETE FROM sessions WHERE user_id IN {marks}", user_ids)
+        db.execute(f"DELETE FROM backup_codes WHERE user_id IN {marks}", user_ids)
+    elif action == "disable":
+        db.execute(f"UPDATE users SET is_active = 0 WHERE id IN {marks}", user_ids)
+        db.execute(f"DELETE FROM sessions WHERE user_id IN {marks}", user_ids)
+    elif action == "enable":
+        db.execute(f"UPDATE users SET is_active = 1 WHERE id IN {marks}", user_ids)
+    db.commit()
+
+
+def user_table():
+    db = get_db()
+    return db.execute(
+        "SELECT u.id, u.username, u.user_group, u.role, u.is_active, u.must_reset, "
+        "(SELECT COUNT(*) FROM sessions s WHERE s.user_id = u.id) AS sessions "
+        "FROM users u ORDER BY u.user_group, u.username"
+    ).fetchall()
+
+
+@app.route("/admin", methods=["GET", "POST"])
+def admin():
+    if g.user is None or g.user["role"] != "admin":
+        return render_template("admin.html", forbidden=True), 403
+    message = None
+    if request.method == "POST":
+        action = request.form.get("action", "")
+        scope = request.form.get("scope", "")
+        target = request.form.get("target", "").strip()
+        admin_pw = request.form.get("admin_password", "")
+        db = get_db()
+        me = db.execute("SELECT password_hash FROM users WHERE id = ?",
+                        (g.user["id"],)).fetchone()
+        try:
+            ph.verify(me["password_hash"], admin_pw)
+            reauth = True
+        except (VerificationError, InvalidHashError):
+            reauth = False
+        if action not in ADMIN_ACTIONS:
+            message = "Unknown action."
+        elif not reauth:
+            message = "Your admin password is incorrect. No action taken."
+            audit("admin_reauth_fail", g.user["username"])
+        else:
+            if scope == "group":
+                rows = db.execute("SELECT id FROM users WHERE user_group = ?", (target,)).fetchall()
+                label = f"group '{target}'"
+            else:
+                rows = db.execute("SELECT id FROM users WHERE username = ?", (target,)).fetchall()
+                label = f"user '{target}'"
+            ids = [r["id"] for r in rows]
+            apply_admin_action(action, ids)
+            db.execute("INSERT INTO audit_actions (actor, action, target) VALUES (?, ?, ?)",
+                       (g.user["username"], action, f"{scope}:{target}"))
+            db.commit()
+            audit("admin_" + action, f"{scope}:{target}")
+            message = f"{ADMIN_ACTIONS[action]} for {label} ({len(ids)} account(s))."
+    groups = sorted({r["user_group"] for r in user_table()})
+    return render_template("admin.html", users=user_table(), groups=groups,
+                           actions=ADMIN_ACTIONS, message=message)
 
 
 @app.route("/")

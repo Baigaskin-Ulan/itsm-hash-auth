@@ -363,7 +363,7 @@ def reset(token):
     db.commit()
     # Look up the token by its hash; join the user so we can enforce the password policy.
     row = db.execute(
-        "SELECT pr.user_id, u.username FROM password_resets pr "
+        "SELECT pr.user_id, u.username, u.password_hash FROM password_resets pr "
         "JOIN users u ON u.id = pr.user_id WHERE pr.token_hash = ?",
         (token_hash(token),),
     ).fetchone()
@@ -373,6 +373,14 @@ def reset(token):
     if request.method == "POST":
         new = request.form.get("new", "")
         error = password_error(row["username"], new)
+        if error is None:
+            # Block resetting to the current password (keeps reset consistent with change-password,
+            # and stops a forced reset from being undone with the same, possibly leaked, password).
+            try:
+                ph.verify(row["password_hash"], new)
+                error = "New password must differ from your previous one."
+            except (VerificationError, InvalidHashError):
+                pass
         if error is None:
             db.execute("UPDATE users SET password_hash = ?, must_reset = 0 WHERE id = ?",
                        (ph.hash(new), row["user_id"]))
